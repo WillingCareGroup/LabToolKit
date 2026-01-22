@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FACS Data Transformer - Melted Table</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .lucide-icon {
+            width: 24px;
+            height: 24px;
+            stroke: currentColor;
+            stroke-width: 2;
+            fill: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState } = React;
+
+        // Simple Lucide icons as SVG components
+        const Upload = () => (
+            <svg className="lucide-icon" viewBox="0 0 24 24">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7,10 12,15 17,10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+        );
+
+        const Download = () => (
+            <svg className="lucide-icon" viewBox="0 0 24 24">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17,8 12,3 7,8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+        );
+
+        const FileText = () => (
+            <svg className="lucide-icon" viewBox="0 0 24 24">
+                <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+            </svg>
+        );
+
+        const AlertCircle = () => (
+            <svg className="lucide-icon" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="12" y1="8" x2="12" y2="12"/>
+                <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+        );
+
+        const FacsDataTransformer = () => {
+            const [originalData, setOriginalData] = useState(null);
+            const [transformedData, setTransformedData] = useState(null);
+            const [meltedData, setMeltedData] = useState(null);
+            const [processing, setProcessing] = useState(false);
+            const [error, setError] = useState(null);
+            const [stats, setStats] = useState(null);
+
+            const handleFileUpload = async (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
+
+                setProcessing(true);
+                setError(null);
+                
+                try {
+                    const buffer = await file.arrayBuffer();
+                    const workbook = XLSX.read(buffer, { cellStyles: true, cellFormulas: true });
+                    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+                    
+                    const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+                    
+                    setOriginalData(rawData);
+                    
+                    const transformed = transformFacsData(rawData);
+                    setTransformedData(transformed);
+                    
+                    const melted = meltDataToXYTable(transformed);
+                    setMeltedData(melted);
+                    
+                } catch (err) {
+                    setError(`Error processing file: ${err.message}`);
+                } finally {
+                    setProcessing(false);
+                }
+            };
+
+            const transformFacsData = (rawData) => {
+                const result = [];
+                const samples = [];
+                
+                for (let i = 1; i < rawData.length; i++) {
+                    const row = rawData[i];
+                    const [depth, name, statistic, cells] = row;
+                    
+                    if (depth === '' && name && name.includes('.fcs')) {
+                        const sampleName = name.split(' ')[0];
+                        samples.push({
+                            sampleName,
+                            startRow: i,
+                            gates: []
+                        });
+                    }
+                }
+                
+                samples.forEach((sample, sampleIndex) => {
+                    const endRow = sampleIndex + 1 < samples.length ? samples[sampleIndex + 1].startRow : rawData.length;
+                    let lastNonFreqGate = '';
+                    
+                    for (let i = sample.startRow; i < endRow; i++) {
+                        const row = rawData[i];
+                        const [depth, name, statistic, cells] = row;
+                        
+                        if (!depth && !name) continue;
+                        
+                        const depthNumber = depth ? (depth.match(/>/g) || []).length : 0;
+                        const isFreqRow = name && name.includes('Freq.');
+                        
+                        let gateName = '';
+                        if (name) {
+                            if (isFreqRow) {
+                                const freqMatch = name.match(/Freq\. of (.+?) =/);
+                                const freqTarget = freqMatch ? freqMatch[1] : 'Unknown';
+                                gateName = `${lastNonFreqGate} of ${freqTarget}`;
+                            } else {
+                                const parts = name.split('/');
+                                gateName = parts[parts.length - 1];
+                                lastNonFreqGate = gateName;
+                            }
+                        }
+                        
+                        const transformedRow = {
+                            Sample: sample.sampleName,
+                            Gate: gateName,
+                            Depth: depthNumber,
+                            Count: cells || '',
+                            Percentage: statistic || '',
+                            Type: isFreqRow ? 'Frequency' : 'Gate',
+                            FullPath: name || ''
+                        };
+                        
+                        result.push(transformedRow);
+                    }
+                });
+                
+                const uniqueSamples = [...new Set(result.map(r => r.Sample))];
+                const uniqueGates = [...new Set(result.map(r => r.Gate))];
+                const freqRows = result.filter(r => r.Type === 'Frequency').length;
+                const gateRows = result.filter(r => r.Type === 'Gate').length;
+                
+                setStats({
+                    totalRows: result.length,
+                    samples: uniqueSamples.length,
+                    uniqueGates: uniqueGates.length,
+                    frequencyRows: freqRows,
+                    gateRows: gateRows
+                });
+                
+                return result;
+            };
+
+            const meltDataToXYTable = (transformedData) => {
+                // Group data by sample
+                const sampleGroups = {};
+                transformedData.forEach(row => {
+                    if (!sampleGroups[row.Sample]) {
+                        sampleGroups[row.Sample] = [];
+                    }
+                    sampleGroups[row.Sample].push(row);
+                });
+
+                // Create melted table
+                const meltedTable = [];
+                const allColumns = new Set();
+
+                // First pass: collect all possible columns
+                Object.values(sampleGroups).forEach(sampleData => {
+                    sampleData.forEach(row => {
+                        const gateName = row.Depth === 0 ? 'Total Event' : row.Gate;
+                        
+                        if (row.Type === 'Frequency') {
+                            // For frequency rows, only create .Freq column
+                            const freqColumnName = `${row.Depth}.${gateName}.Freq`;
+                            allColumns.add(freqColumnName);
+                        } else {
+                            // For gate rows, create both .Count and .% columns
+                            const countColumnName = `${row.Depth}.${gateName}.Count`;
+                            const percentColumnName = `${row.Depth}.${gateName}.%`;
+                            allColumns.add(countColumnName);
+                            allColumns.add(percentColumnName);
+                        }
+                    });
+                });
+
+                // Second pass: create the melted table
+                Object.entries(sampleGroups).forEach(([sampleName, sampleData]) => {
+                    const sampleRow = { Sample: sampleName };
+                    
+                    // Initialize all columns with empty values
+                    allColumns.forEach(col => {
+                        sampleRow[col] = '';
+                    });
+
+                    // Fill in the data
+                    sampleData.forEach(row => {
+                        const gateName = row.Depth === 0 ? 'Total Event' : row.Gate;
+                        
+                        if (row.Type === 'Frequency') {
+                            // For frequency rows, fill .Freq column
+                            const freqColumnName = `${row.Depth}.${gateName}.Freq`;
+                            sampleRow[freqColumnName] = row.Percentage;
+                        } else {
+                            // For gate rows, fill both .Count and .% columns
+                            const countColumnName = `${row.Depth}.${gateName}.Count`;
+                            const percentColumnName = `${row.Depth}.${gateName}.%`;
+                            sampleRow[countColumnName] = row.Count;
+                            sampleRow[percentColumnName] = row.Percentage;
+                        }
+                    });
+
+                    meltedTable.push(sampleRow);
+                });
+
+                return meltedTable;
+            };
+
+            const downloadMeltedData = () => {
+                if (!meltedData) return;
+                
+                const worksheet = XLSX.utils.json_to_sheet(meltedData);
+                const workbook = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(workbook, worksheet, 'Melted_FACS_Data');
+                
+                // Auto-size columns
+                const maxColWidth = 30;
+                const colWidths = Object.keys(meltedData[0] || {}).map(key => ({
+                    wch: Math.min(key.length + 2, maxColWidth)
+                }));
+                worksheet['!cols'] = colWidths;
+                
+                XLSX.writeFile(workbook, 'melted_facs_data.xlsx');
+            };
+
+            const renderMeltedPreview = () => {
+                if (!meltedData || meltedData.length === 0) return null;
+
+                const firstSample = meltedData[0];
+                const columns = Object.keys(firstSample);
+                const maxColumns = 10; // Show first 10 columns for preview
+
+                return (
+                    <div className="mt-6">
+                        <h3 className="text-lg font-semibold mb-4">Preview of Melted X/Y Table</h3>
+                        <p className="text-sm text-gray-600 mb-4">
+                            Rows: Samples ({meltedData.length}) | Columns: Gates/Frequencies ({columns.length - 1})
+                        </p>
+                        <div className="overflow-x-auto">
+                            <table className="min-w-full border-collapse border border-gray-300 text-xs">
+                                <thead>
+                                    <tr className="bg-gray-100">
+                                        {columns.slice(0, maxColumns).map((col, index) => (
+                                            <th key={index} className="border border-gray-300 px-2 py-2 text-left font-medium">
+                                                {col}
+                                            </th>
+                                        ))}
+                                        {columns.length > maxColumns && (
+                                            <th className="border border-gray-300 px-2 py-2 text-left font-medium">
+                                                ...
+                                            </th>
+                                        )}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {meltedData.slice(0, 10).map((row, rowIndex) => (
+                                        <tr key={rowIndex} className={rowIndex % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                                            {columns.slice(0, maxColumns).map((col, colIndex) => (
+                                                <td key={colIndex} className="border border-gray-300 px-2 py-2">
+                                                    {row[col]}
+                                                </td>
+                                            ))}
+                                            {columns.length > maxColumns && (
+                                                <td className="border border-gray-300 px-2 py-2 text-gray-400">
+                                                    ...
+                                                </td>
+                                            )}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div className="mt-4 text-sm text-gray-600">
+                            <p>• Showing first {Math.min(10, meltedData.length)} samples and first {Math.min(maxColumns, columns.length)} columns</p>
+                            <p>• Column format: Depth.GateName.Type</p>
+                            <p>• Gate columns: ".Count" (cell counts) and ".%" (percentages)</p>
+                            <p>• Frequency columns: ".Freq" (frequency percentages)</p>
+                            <p>• Examples: "0.Total Event.Count", "1.Lymphocytes.%", "2.HSC of Live_Lin-.Freq"</p>
+                            <p>• Download full table to see all {meltedData.length} samples × {columns.length} columns</p>
+                        </div>
+                    </div>
+                );
+            };
+
+            return (
+                <div className="max-w-7xl mx-auto p-6">
+                    <div className="mb-8">
+                        <h1 className="text-3xl font-bold text-gray-900 mb-2">FACS Data Transformer - Melted X/Y Table</h1>
+                        <p className="text-gray-600">
+                            Transform hierarchical FACS data into a melted X/Y table where rows are samples and columns are gates/frequencies.
+                        </p>
+                    </div>
+
+                    <div className="mb-6">
+                        <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-blue-500 transition-colors">
+                            <Upload className="mx-auto h-12 w-12 text-gray-400 mb-4" />
+                            <div className="mb-4">
+                                <label htmlFor="file-upload" className="cursor-pointer">
+                                    <span className="text-lg font-medium text-blue-600 hover:text-blue-500">
+                                        Upload FACS Excel file
+                                    </span>
+                                    <input
+                                        id="file-upload"
+                                        type="file"
+                                        accept=".xls,.xlsx"
+                                        onChange={handleFileUpload}
+                                        className="hidden"
+                                    />
+                                </label>
+                            </div>
+                            <p className="text-sm text-gray-500">
+                                Supports .xls and .xlsx files with hierarchical FACS gating data
+                            </p>
+                        </div>
+                    </div>
+
+                    {processing && (
+                        <div className="mb-6 p-4 bg-blue-50 rounded-lg flex items-center">
+                            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mr-3"></div>
+                            <span className="text-blue-800">Processing file...</span>
+                        </div>
+                    )}
+
+                    {error && (
+                        <div className="mb-6 p-4 bg-red-50 rounded-lg flex items-center">
+                            <AlertCircle className="h-6 w-6 text-red-600 mr-3" />
+                            <span className="text-red-800">{error}</span>
+                        </div>
+                    )}
+
+                    {stats && (
+                        <div className="mb-6 grid grid-cols-2 md:grid-cols-5 gap-4">
+                            <div className="bg-blue-50 p-4 rounded-lg">
+                                <div className="text-2xl font-bold text-blue-600">{stats.totalRows}</div>
+                                <div className="text-sm text-blue-800">Total Rows</div>
+                            </div>
+                            <div className="bg-green-50 p-4 rounded-lg">
+                                <div className="text-2xl font-bold text-green-600">{stats.samples}</div>
+                                <div className="text-sm text-green-800">Samples</div>
+                            </div>
+                            <div className="bg-purple-50 p-4 rounded-lg">
+                                <div className="text-2xl font-bold text-purple-600">{stats.uniqueGates}</div>
+                                <div className="text-sm text-purple-800">Unique Gates</div>
+                            </div>
+                            <div className="bg-yellow-50 p-4 rounded-lg">
+                                <div className="text-2xl font-bold text-yellow-600">{stats.gateRows}</div>
+                                <div className="text-sm text-yellow-800">Gate Rows</div>
+                            </div>
+                            <div className="bg-indigo-50 p-4 rounded-lg">
+                                <div className="text-2xl font-bold text-indigo-600">{stats.frequencyRows}</div>
+                                <div className="text-sm text-indigo-800">Frequency Rows</div>
+                            </div>
+                        </div>
+                    )}
+
+                    {meltedData && (
+                        <div className="mb-6">
+                            <button
+                                onClick={downloadMeltedData}
+                                className="flex items-center px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                            >
+                                <Download className="h-5 w-5 mr-2" />
+                                Download Melted X/Y Table
+                            </button>
+                        </div>
+                    )}
+
+                    {renderMeltedPreview()}
+
+                    <div className="mt-8 p-6 bg-gray-50 rounded-lg">
+                        <h3 className="text-lg font-semibold mb-4 flex items-center">
+                            <FileText className="h-5 w-5 mr-2" />
+                            Melted Table Format
+                        </h3>
+                        <ul className="space-y-2 text-sm text-gray-700">
+                            <li>• <strong>Rows:</strong> Each row represents one sample</li>
+                            <li>• <strong>Columns:</strong> Each gate or frequency measurement</li>
+                            <li>• <strong>Gate columns:</strong> Two columns per gate - ".Count" (cell counts) and ".%" (percentages)</li>
+                            <li>• <strong>Frequency columns:</strong> One column per frequency - ".Freq" (frequency percentages)</li>
+                            <li>• <strong>Column naming:</strong> Depth.GateName.Type (e.g., "0.Total Event.Count", "1.Lymphocytes.%", "2.HSC of Live_Lin-.Freq")</li>
+                            <li>• <strong>Depth 0 gates:</strong> Renamed to "Total Event" for clarity</li>
+                            <li>• <strong>Missing data:</strong> Empty cells where a gate/frequency doesn't exist for a sample</li>
+                        </ul>
+                    </div>
+                </div>
+            );
+        };
+
+        ReactDOM.render(<FacsDataTransformer />, document.getElementById('root'));
+    </script>
+</body>
+</html>
