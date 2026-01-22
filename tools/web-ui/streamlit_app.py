@@ -6,6 +6,7 @@ from typing import List, Optional, Tuple
 import streamlit as st
 from PIL import Image
 from streamlit.elements import image as st_image
+from streamlit.elements.lib import image_utils, layout_utils
 from streamlit_drawable_canvas import st_canvas
 
 
@@ -24,7 +25,7 @@ def load_images(files) -> List[Tuple[str, Image.Image]]:
     images = []
     for file in files:
         try:
-            image = Image.open(file)
+            image = Image.open(file).convert("RGB")
             images.append((file.name, image))
         except Exception:
             st.warning(f"Could not open {file.name}")
@@ -35,32 +36,11 @@ def ensure_streamlit_image_to_url() -> None:
     if hasattr(st_image, "image_to_url"):
         return
 
-    def image_to_url(image, *args, **kwargs) -> str:
-        if isinstance(image, Image.Image):
-            pil_image = image
-        else:
-            pil_image = Image.fromarray(image)
-
-        output_format = kwargs.get("output_format", "auto")
-        image_format = pil_image.format or "PNG"
-        if output_format != "auto":
-            image_format = output_format
-        image_format = image_format.upper()
-
-        buffer = io.BytesIO()
-        pil_image.save(buffer, format=image_format)
-        data = buffer.getvalue()
-
-        mime = "image/png"
-        if image_format in {"JPG", "JPEG"}:
-            mime = "image/jpeg"
-        elif image_format == "GIF":
-            mime = "image/gif"
-
-        import base64
-
-        b64 = base64.b64encode(data).decode("ascii")
-        return "data:{};base64,{}".format(mime, b64)
+    def image_to_url(image, width, clamp, channels, output_format, image_id) -> str:
+        layout_config = layout_utils.LayoutConfig(width=width)
+        return image_utils.image_to_url(
+            image, layout_config, clamp, channels, output_format, image_id
+        )
 
     st_image.image_to_url = image_to_url
 
@@ -78,6 +58,11 @@ def build_zip(images: List[Tuple[str, Image.Image]], crop_box: CropBox) -> bytes
             output_name = f"{base}_cropped.{ext}"
             image_bytes = io.BytesIO()
             save_format = image.format if image.format else ext.upper()
+            if save_format in {"TIF", "TIFF"}:
+                save_format = "TIFF"
+            elif save_format not in {"PNG", "JPEG", "JPG", "BMP", "GIF"}:
+                save_format = "PNG"
+                output_name = f"{base}_cropped.png"
             cropped.save(image_bytes, format=save_format)
             zf.writestr(output_name, image_bytes.getvalue())
     return buffer.getvalue()
@@ -111,6 +96,12 @@ def crop_box_from_canvas(canvas_json, width: int, height: int) -> Optional[CropB
     )
 
 
+def resize_for_canvas(image: Image.Image, max_size: int = 900) -> Image.Image:
+    display = image.copy()
+    display.thumbnail((max_size, max_size), Image.LANCZOS)
+    return display
+
+
 def main() -> None:
     st.set_page_config(page_title="Lab Toolkit UI", layout="wide")
     st.title("Lab Toolkit: MultiCropper (Demo)")
@@ -135,6 +126,10 @@ def main() -> None:
 
     first_name, first_image = images[0]
     width, height = first_image.size
+    display_image = resize_for_canvas(first_image)
+    display_width, display_height = display_image.size
+    scale_x = width / display_width
+    scale_y = height / display_height
 
     ensure_streamlit_image_to_url()
     st.subheader("Crop selection")
@@ -143,31 +138,38 @@ def main() -> None:
         fill_color="rgba(255, 106, 61, 0.15)",
         stroke_width=2,
         stroke_color="#ff6a3d",
-        background_image=first_image,
+        background_image=display_image,
         update_streamlit=True,
-        height=height,
-        width=width,
+        height=display_height,
+        width=display_width,
         drawing_mode="rect",
         key="crop_canvas",
     )
 
-    crop_box = crop_box_from_canvas(canvas.json_data, width, height)
+    crop_box = crop_box_from_canvas(canvas.json_data, display_width, display_height)
     if crop_box is None:
-        crop_box = CropBox(left=0, top=0, right=width, bottom=height)
+        crop_box = CropBox(left=0, top=0, right=display_width, bottom=display_height)
+
+    crop_box = CropBox(
+        left=int(crop_box.left * scale_x),
+        top=int(crop_box.top * scale_y),
+        right=int(crop_box.right * scale_x),
+        bottom=int(crop_box.bottom * scale_y),
+    )
+    crop_box = clamp_crop_box(crop_box, width, height)
 
     st.subheader("Preview")
     preview = crop_image(first_image, crop_box)
     st.image(preview, caption=f"Preview: {first_name}", use_column_width=True)
 
     st.subheader("Download")
-    if st.button("Create zip"):
-        zip_bytes = build_zip(images, crop_box)
-        st.download_button(
-            label="Download cropped images",
-            data=zip_bytes,
-            file_name="cropped_images.zip",
-            mime="application/zip",
-        )
+    zip_bytes = build_zip(images, crop_box)
+    st.download_button(
+        label="Download cropped images",
+        data=zip_bytes,
+        file_name="cropped_images.zip",
+        mime="application/zip",
+    )
 
 
 if __name__ == "__main__":
