@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lab Toolkit | James</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-ink: #0b0f12;
+        --bg-ash: #141a1f;
+        --bg-mist: #1a232a;
+        --accent-sun: #ffb84d;
+        --accent-ember: #ff6a3d;
+        --accent-moss: #6dd6a0;
+        --text-ice: #eef4f8;
+        --text-dim: #c2ccd4;
+        --text-muted: #8b98a6;
+        --card: #11171c;
+        --stroke: #27303a;
+        --shadow: rgba(0, 0, 0, 0.35);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Space Grotesk", "Segoe UI", sans-serif;
+        color: var(--text-ice);
+        background: radial-gradient(
+            circle at 10% 20%,
+            rgba(255, 184, 77, 0.22),
+            transparent 55%
+          ),
+          radial-gradient(
+            circle at 80% 10%,
+            rgba(109, 214, 160, 0.18),
+            transparent 48%
+          ),
+          linear-gradient(135deg, var(--bg-ink), var(--bg-ash) 45%, var(--bg-mist));
+        min-height: 100vh;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .page {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 48px 24px 80px;
+      }
+
+      .nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 48px;
+      }
+
+      .badge {
+        padding: 8px 14px;
+        border: 1px solid var(--stroke);
+        border-radius: 999px;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        background: rgba(17, 23, 28, 0.65);
+      }
+
+      .hero {
+        display: grid;
+        gap: 32px;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        align-items: center;
+        margin-bottom: 56px;
+      }
+
+      .hero h1 {
+        font-size: clamp(32px, 4vw, 52px);
+        line-height: 1.05;
+        margin: 0 0 16px;
+      }
+
+      .hero p {
+        margin: 0 0 20px;
+        color: var(--text-dim);
+        font-size: 18px;
+      }
+
+      .cta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+
+      .cta {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 18px;
+        border-radius: 999px;
+        border: 1px solid transparent;
+        background: linear-gradient(135deg, var(--accent-ember), var(--accent-sun));
+        color: #101418;
+        font-weight: 600;
+        box-shadow: 0 12px 24px var(--shadow);
+      }
+
+      .cta.secondary {
+        background: transparent;
+        border-color: var(--stroke);
+        color: var(--text-ice);
+      }
+
+      .stats {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      }
+
+      .stat-card {
+        padding: 18px;
+        border-radius: 16px;
+        background: rgba(17, 23, 28, 0.7);
+        border: 1px solid var(--stroke);
+      }
+
+      .stat-card h3 {
+        margin: 0 0 6px;
+        font-size: 18px;
+        font-weight: 600;
+      }
+
+      .stat-card p {
+        margin: 0;
+        color: var(--text-muted);
+        font-size: 14px;
+      }
+
+      .section-title {
+        margin: 48px 0 16px;
+        font-size: 20px;
+        letter-spacing: 0.02em;
+      }
+
+      .tool-grid {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      }
+
+      .tool-card {
+        padding: 18px;
+        border-radius: 16px;
+        background: var(--card);
+        border: 1px solid var(--stroke);
+        display: grid;
+        gap: 10px;
+        min-height: 170px;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .tool-card::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(circle at top right, rgba(255, 106, 61, 0.15), transparent 55%);
+        opacity: 0;
+        transition: opacity 0.3s ease;
+      }
+
+      .tool-card:hover::after {
+        opacity: 1;
+      }
+
+      .tool-card h4 {
+        margin: 0;
+        font-size: 18px;
+        z-index: 1;
+      }
+
+      .tool-card p {
+        margin: 0;
+        color: var(--text-muted);
+        font-size: 14px;
+        z-index: 1;
+      }
+
+      .tag {
+        font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        color: var(--accent-moss);
+      }
+
+      .footer {
+        margin-top: 56px;
+        padding-top: 24px;
+        border-top: 1px solid var(--stroke);
+        color: var(--text-muted);
+        font-size: 14px;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .reveal {
+        opacity: 0;
+        transform: translateY(20px);
+        animation: reveal 0.8s ease forwards;
+      }
+
+      .delay-1 {
+        animation-delay: 0.1s;
+      }
+
+      .delay-2 {
+        animation-delay: 0.2s;
+      }
+
+      .delay-3 {
+        animation-delay: 0.3s;
+      }
+
+      @keyframes reveal {
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @media (max-width: 640px) {
+        .nav {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+        .cta-row {
+          width: 100%;
+        }
+        .cta {
+          width: 100%;
+          justify-content: center;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <nav class="nav">
+        <div class="badge">Lab Toolkit</div>
+        <div class="badge">James | Applied Bio + Automation</div>
+      </nav>
+
+      <section class="hero">
+        <div class="reveal">
+          <h1>Purpose-built lab scripts that turn messy workflows into repeatable runs.</h1>
+          <p>
+            A personal toolkit for imaging, sequencing, and data cleanup. Built for speed in
+            the lab and clarity for collaborators.
+          </p>
+          <div class="cta-row">
+            <a class="cta" href="README.md">Read the docs</a>
+            <a class="cta secondary" href="https://github.com/WillingCareGroup/LabToolKit">
+              View on GitHub
+            </a>
+          </div>
+        </div>
+        <div class="stats reveal delay-1">
+          <div class="stat-card">
+            <h3>8</h3>
+            <p>Tool categories</p>
+          </div>
+          <div class="stat-card">
+            <h3>12+</h3>
+            <p>Scripts versioned + curated</p>
+          </div>
+          <div class="stat-card">
+            <h3>Fast setup</h3>
+            <p>Python-first workflows</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2 class="section-title reveal delay-1">Featured tools</h2>
+        <div class="tool-grid">
+          <article class="tool-card reveal delay-1">
+            <span class="tag">FACS</span>
+            <h4>FACS Data Transformer</h4>
+            <p>Transforms gating exports into melted X/Y tables for analysis.</p>
+          </article>
+          <article class="tool-card reveal delay-2">
+            <span class="tag">Imaging</span>
+            <h4>ImageMerger</h4>
+            <p>Builds image grids from BE layouts with labels and fast output.</p>
+          </article>
+          <article class="tool-card reveal delay-3">
+            <span class="tag">Imaging</span>
+            <h4>MultiCropper</h4>
+            <p>Select once, crop a whole image set with consistent bounds.</p>
+          </article>
+          <article class="tool-card reveal delay-1">
+            <span class="tag">Sequencing</span>
+            <h4>Sequence Chopper</h4>
+            <p>Splits long DNA strings into primer-friendly chunks.</p>
+          </article>
+          <article class="tool-card reveal delay-2">
+            <span class="tag">CRISPR</span>
+            <h4>sgRNA Primer Bulk</h4>
+            <p>Bulk-generate oligos from Excel sequence lists.</p>
+          </article>
+          <article class="tool-card reveal delay-3">
+            <span class="tag">Video</span>
+            <h4>SlidesMiner</h4>
+            <p>Extracts slide changes from screen recordings and builds PDFs.</p>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <h2 class="section-title reveal delay-2">Why this repo</h2>
+        <div class="tool-grid">
+          <article class="tool-card reveal delay-2">
+            <h4>Real lab context</h4>
+            <p>Each script was built to solve a real workflow bottleneck.</p>
+          </article>
+          <article class="tool-card reveal delay-3">
+            <h4>Reusable patterns</h4>
+            <p>Clean inputs, predictable outputs, and reproducible results.</p>
+          </article>
+          <article class="tool-card reveal delay-1">
+            <h4>Hiring-friendly</h4>
+            <p>Quick to scan, easy to demo, and documented with examples.</p>
+          </article>
+        </div>
+      </section>
+
+      <footer class="footer reveal delay-3">
+        <span>Built by James | WillingCareGroup</span>
+        <span>MIT Licensed</span>
+      </footer>
+    </main>
+  </body>
+</html>
