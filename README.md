@@ -142,6 +142,13 @@ Usage:
 python tools/ut-mutator/ut_mutator.py -i "AUGCUU"
 ```
 
+### Keyence Imaging Macros
+
+Keyence `.mrf` macro files used to automate HTS imaging when autofocus is unreliable.
+
+- Location: `tools/keyence-macros/`
+- Files: Plate layouts and capture routines for 24/48/96-well plates and iBidi 96Square
+
 ## Repo structure
 
 ```
