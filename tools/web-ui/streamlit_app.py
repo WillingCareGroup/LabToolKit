@@ -5,6 +5,7 @@ from typing import List, Optional, Tuple
 
 import streamlit as st
 from PIL import Image
+from streamlit.elements import image as st_image
 from streamlit_drawable_canvas import st_canvas
 
 
@@ -28,6 +29,40 @@ def load_images(files) -> List[Tuple[str, Image.Image]]:
         except Exception:
             st.warning(f"Could not open {file.name}")
     return images
+
+
+def ensure_streamlit_image_to_url() -> None:
+    if hasattr(st_image, "image_to_url"):
+        return
+
+    def image_to_url(image, *args, **kwargs) -> str:
+        if isinstance(image, Image.Image):
+            pil_image = image
+        else:
+            pil_image = Image.fromarray(image)
+
+        output_format = kwargs.get("output_format", "auto")
+        image_format = pil_image.format or "PNG"
+        if output_format != "auto":
+            image_format = output_format
+        image_format = image_format.upper()
+
+        buffer = io.BytesIO()
+        pil_image.save(buffer, format=image_format)
+        data = buffer.getvalue()
+
+        mime = "image/png"
+        if image_format in {"JPG", "JPEG"}:
+            mime = "image/jpeg"
+        elif image_format == "GIF":
+            mime = "image/gif"
+
+        import base64
+
+        b64 = base64.b64encode(data).decode("ascii")
+        return "data:{};base64,{}".format(mime, b64)
+
+    st_image.image_to_url = image_to_url
 
 
 def crop_image(image: Image.Image, crop_box: CropBox) -> Image.Image:
@@ -101,6 +136,7 @@ def main() -> None:
     first_name, first_image = images[0]
     width, height = first_image.size
 
+    ensure_streamlit_image_to_url()
     st.subheader("Crop selection")
     st.write("Draw a rectangle on the image to set the crop area.")
     canvas = st_canvas(
