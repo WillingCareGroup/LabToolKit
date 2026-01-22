@@ -1,10 +1,11 @@
 import io
 import zipfile
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import streamlit as st
 from PIL import Image
+from streamlit_drawable_canvas import st_canvas
 
 
 @dataclass
@@ -47,6 +48,34 @@ def build_zip(images: List[Tuple[str, Image.Image]], crop_box: CropBox) -> bytes
     return buffer.getvalue()
 
 
+def clamp_crop_box(box: CropBox, width: int, height: int) -> CropBox:
+    left = max(0, min(box.left, width - 1))
+    top = max(0, min(box.top, height - 1))
+    right = max(left + 1, min(box.right, width))
+    bottom = max(top + 1, min(box.bottom, height))
+    return CropBox(left=left, top=top, right=right, bottom=bottom)
+
+
+def crop_box_from_canvas(canvas_json, width: int, height: int) -> Optional[CropBox]:
+    if not canvas_json:
+        return None
+    objects = canvas_json.get("objects", [])
+    if not objects:
+        return None
+    rect = objects[-1]
+    if rect.get("type") != "rect":
+        return None
+    left = int(rect.get("left", 0))
+    top = int(rect.get("top", 0))
+    rect_width = int(rect.get("width", 0) * rect.get("scaleX", 1))
+    rect_height = int(rect.get("height", 0) * rect.get("scaleY", 1))
+    return clamp_crop_box(
+        CropBox(left=left, top=top, right=left + rect_width, bottom=top + rect_height),
+        width,
+        height,
+    )
+
+
 def main() -> None:
     st.set_page_config(page_title="Lab Toolkit UI", layout="wide")
     st.title("Lab Toolkit: MultiCropper (Demo)")
@@ -72,22 +101,23 @@ def main() -> None:
     first_name, first_image = images[0]
     width, height = first_image.size
 
-    st.subheader("Crop settings")
-    col_left, col_top, col_right, col_bottom = st.columns(4)
-    with col_left:
-        left = st.number_input("Left", min_value=0, max_value=width - 1, value=0)
-    with col_top:
-        top = st.number_input("Top", min_value=0, max_value=height - 1, value=0)
-    with col_right:
-        right = st.number_input(
-            "Right", min_value=left + 1, max_value=width, value=width
-        )
-    with col_bottom:
-        bottom = st.number_input(
-            "Bottom", min_value=top + 1, max_value=height, value=height
-        )
+    st.subheader("Crop selection")
+    st.write("Draw a rectangle on the image to set the crop area.")
+    canvas = st_canvas(
+        fill_color="rgba(255, 106, 61, 0.15)",
+        stroke_width=2,
+        stroke_color="#ff6a3d",
+        background_image=first_image,
+        update_streamlit=True,
+        height=height,
+        width=width,
+        drawing_mode="rect",
+        key="crop_canvas",
+    )
 
-    crop_box = CropBox(left=left, top=top, right=right, bottom=bottom)
+    crop_box = crop_box_from_canvas(canvas.json_data, width, height)
+    if crop_box is None:
+        crop_box = CropBox(left=0, top=0, right=width, bottom=height)
 
     st.subheader("Preview")
     preview = crop_image(first_image, crop_box)
