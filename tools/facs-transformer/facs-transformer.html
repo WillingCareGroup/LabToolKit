@@ -63,6 +63,14 @@
             const [processing, setProcessing] = useState(false);
             const [error, setError] = useState(null);
             const [stats, setStats] = useState(null);
+            const [baseColumnOrder, setBaseColumnOrder] = useState([]);
+            const [baseSampleOrder, setBaseSampleOrder] = useState([]);
+            const [selectedColumns, setSelectedColumns] = useState([]);
+            const [selectedSamples, setSelectedSamples] = useState([]);
+            const [includeAlias, setIncludeAlias] = useState(false);
+            const [sourceFileName, setSourceFileName] = useState('');
+            const [dragItem, setDragItem] = useState(null);
+            const [dragOver, setDragOver] = useState(null);
 
             const handleFileUpload = async (event) => {
                 const file = event.target.files[0];
@@ -70,6 +78,7 @@
 
                 setProcessing(true);
                 setError(null);
+                setSourceFileName(file.name || '');
                 
                 try {
                     const buffer = await file.arrayBuffer();
@@ -83,8 +92,13 @@
                     const transformed = transformFacsData(rawData);
                     setTransformedData(transformed);
                     
-                    const melted = meltDataToXYTable(transformed);
-                    setMeltedData(melted);
+                    const { meltedTable, columnOrder, sampleOrder } = meltDataToXYTable(transformed);
+                    setMeltedData(meltedTable);
+                    setBaseColumnOrder(columnOrder);
+                    setBaseSampleOrder(sampleOrder);
+                    setSelectedColumns(columnOrder);
+                    setSelectedSamples(sampleOrder.map((name) => ({ name, alias: '' })));
+                    setIncludeAlias(false);
                     
                 } catch (err) {
                     setError(`Error processing file: ${err.message}`);
@@ -177,36 +191,54 @@
                     sampleGroups[row.Sample].push(row);
                 });
 
+                const sampleOrder = [];
+                const sampleSeen = new Set();
+                transformedData.forEach(row => {
+                    if (!sampleSeen.has(row.Sample)) {
+                        sampleSeen.add(row.Sample);
+                        sampleOrder.push(row.Sample);
+                    }
+                });
+
                 // Create melted table
                 const meltedTable = [];
-                const allColumns = new Set();
+                const allColumns = ['Sample'];
+                const columnSeen = new Set(allColumns);
 
-                // First pass: collect all possible columns
-                Object.values(sampleGroups).forEach(sampleData => {
-                    sampleData.forEach(row => {
-                        const gateName = row.Depth === 0 ? 'Total Event' : row.Gate;
-                        
-                        if (row.Type === 'Frequency') {
-                            // For frequency rows, only create .Freq column
-                            const freqColumnName = `${row.Depth}.${gateName}.Freq`;
-                            allColumns.add(freqColumnName);
-                        } else {
-                            // For gate rows, create both .Count and .% columns
-                            const countColumnName = `${row.Depth}.${gateName}.Count`;
-                            const percentColumnName = `${row.Depth}.${gateName}.%`;
-                            allColumns.add(countColumnName);
-                            allColumns.add(percentColumnName);
+                // First pass: collect all possible columns in encounter order
+                transformedData.forEach(row => {
+                    const gateName = row.Depth === 0 ? 'Total Event' : row.Gate;
+                    
+                    if (row.Type === 'Frequency') {
+                        const freqColumnName = `${row.Depth}.${gateName}.Freq`;
+                        if (!columnSeen.has(freqColumnName)) {
+                            columnSeen.add(freqColumnName);
+                            allColumns.push(freqColumnName);
                         }
-                    });
+                    } else {
+                        const countColumnName = `${row.Depth}.${gateName}.Count`;
+                        const percentColumnName = `${row.Depth}.${gateName}.%`;
+                        if (!columnSeen.has(countColumnName)) {
+                            columnSeen.add(countColumnName);
+                            allColumns.push(countColumnName);
+                        }
+                        if (!columnSeen.has(percentColumnName)) {
+                            columnSeen.add(percentColumnName);
+                            allColumns.push(percentColumnName);
+                        }
+                    }
                 });
 
                 // Second pass: create the melted table
-                Object.entries(sampleGroups).forEach(([sampleName, sampleData]) => {
+                sampleOrder.forEach(sampleName => {
+                    const sampleData = sampleGroups[sampleName] || [];
                     const sampleRow = { Sample: sampleName };
                     
                     // Initialize all columns with empty values
                     allColumns.forEach(col => {
-                        sampleRow[col] = '';
+                        if (col !== 'Sample') {
+                            sampleRow[col] = '';
+                        }
                     });
 
                     // Fill in the data
@@ -214,11 +246,9 @@
                         const gateName = row.Depth === 0 ? 'Total Event' : row.Gate;
                         
                         if (row.Type === 'Frequency') {
-                            // For frequency rows, fill .Freq column
                             const freqColumnName = `${row.Depth}.${gateName}.Freq`;
                             sampleRow[freqColumnName] = row.Percentage;
                         } else {
-                            // For gate rows, fill both .Count and .% columns
                             const countColumnName = `${row.Depth}.${gateName}.Count`;
                             const percentColumnName = `${row.Depth}.${gateName}.%`;
                             sampleRow[countColumnName] = row.Count;
@@ -229,19 +259,143 @@
                     meltedTable.push(sampleRow);
                 });
 
-                return meltedTable;
+                return { meltedTable, columnOrder: allColumns, sampleOrder };
+            };
+
+            const getAvailableColumns = () => {
+                const allColumns = includeAlias
+                    ? [...baseColumnOrder, 'SampleAlias']
+                    : [...baseColumnOrder];
+                return allColumns.filter(col => !selectedColumns.includes(col));
+            };
+
+            const getAvailableSamples = () => {
+                const selectedNames = new Set(selectedSamples.map(s => s.name));
+                return baseSampleOrder.filter(name => !selectedNames.has(name));
+            };
+
+            const buildOutputData = () => {
+                if (!meltedData) return null;
+                const rowMap = {};
+                meltedData.forEach(row => {
+                    rowMap[row.Sample] = row;
+                });
+
+                const outputRows = selectedSamples.map((entry) => {
+                    const baseRow = rowMap[entry.name] || {};
+                    const row = {};
+                    selectedColumns.forEach(col => {
+                        if (col === 'SampleAlias') {
+                            row[col] = includeAlias ? (entry.alias || '') : '';
+                        } else if (col === 'Sample') {
+                            row[col] = entry.name || baseRow[col] || '';
+                        } else {
+                            row[col] = baseRow[col] ?? '';
+                        }
+                    });
+                    return row;
+                });
+
+                return outputRows;
+            };
+
+            const moveItem = (items, fromIndex, toIndex) => {
+                if (toIndex < 0 || toIndex >= items.length) return items;
+                const next = items.slice();
+                const [moved] = next.splice(fromIndex, 1);
+                next.splice(toIndex, 0, moved);
+                return next;
+            };
+
+            const handleDragStart = (type, index) => {
+                setDragItem({ type, index });
+            };
+
+            const handleDragOver = (event, type, index) => {
+                event.preventDefault();
+                setDragOver({ type, index });
+            };
+
+            const handleDragEnd = () => {
+                setDragItem(null);
+                setDragOver(null);
+            };
+
+            const handleDrop = (type, index) => {
+                if (!dragItem || dragItem.type !== type) return;
+                if (type === 'columns') {
+                    setSelectedColumns((prev) => moveItem(prev, dragItem.index, index));
+                } else if (type === 'samples') {
+                    setSelectedSamples((prev) => moveItem(prev, dragItem.index, index));
+                }
+                setDragItem(null);
+                setDragOver(null);
+            };
+
+            const getCellClass = (columnName) => {
+                if (columnName === 'Sample' || columnName === 'SampleAlias') {
+                    return 'bg-white text-gray-900';
+                }
+                if (columnName.endsWith('.Count')) {
+                    return 'bg-emerald-50 text-emerald-900';
+                }
+                if (columnName.endsWith('.%')) {
+                    return 'bg-amber-50 text-amber-900';
+                }
+                if (columnName.endsWith('.Freq')) {
+                    return 'bg-blue-50 text-blue-900';
+                }
+                return 'bg-white text-gray-900';
+            };
+
+            const getColumnBadgeClass = (columnName) => {
+                if (columnName === 'Sample') {
+                    return 'bg-slate-100 text-slate-800 border-slate-200';
+                }
+                if (columnName === 'SampleAlias') {
+                    return 'bg-slate-50 text-slate-700 border-slate-200';
+                }
+                if (columnName.endsWith('.Count')) {
+                    return 'bg-emerald-50 text-emerald-900 border-emerald-200';
+                }
+                if (columnName.endsWith('.%')) {
+                    return 'bg-amber-50 text-amber-900 border-amber-200';
+                }
+                if (columnName.endsWith('.Freq')) {
+                    return 'bg-blue-50 text-blue-900 border-blue-200';
+                }
+                return 'bg-white text-gray-900 border-gray-200';
+            };
+
+            const toggleAliasColumn = (enabled) => {
+                setIncludeAlias(enabled);
+                if (enabled) {
+                    if (!selectedColumns.includes('SampleAlias')) {
+                        const insertIndex = selectedColumns.indexOf('Sample');
+                        const next = selectedColumns.slice();
+                        if (insertIndex >= 0) {
+                            next.splice(insertIndex + 1, 0, 'SampleAlias');
+                        } else {
+                            next.unshift('SampleAlias');
+                        }
+                        setSelectedColumns(next);
+                    }
+                } else {
+                    setSelectedColumns(selectedColumns.filter(col => col !== 'SampleAlias'));
+                }
             };
 
             const downloadMeltedData = () => {
-                if (!meltedData) return;
+                const outputData = buildOutputData();
+                if (!outputData || outputData.length === 0) return;
                 
-                const worksheet = XLSX.utils.json_to_sheet(meltedData);
+                const worksheet = XLSX.utils.json_to_sheet(outputData);
                 const workbook = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(workbook, worksheet, 'Melted_FACS_Data');
                 
                 // Auto-size columns
                 const maxColWidth = 30;
-                const colWidths = Object.keys(meltedData[0] || {}).map(key => ({
+                const colWidths = Object.keys(outputData[0] || {}).map(key => ({
                     wch: Math.min(key.length + 2, maxColWidth)
                 }));
                 worksheet['!cols'] = colWidths;
@@ -249,45 +403,117 @@
                 XLSX.writeFile(workbook, 'melted_facs_data.xlsx');
             };
 
-            const renderMeltedPreview = () => {
-                if (!meltedData || meltedData.length === 0) return null;
+            const downloadLayout = () => {
+                if (!meltedData) return;
+                const layout = {
+                    version: 1,
+                    createdAt: new Date().toISOString(),
+                    sourceFile: sourceFileName,
+                    includeAlias,
+                    selectedColumns,
+                    selectedSamples
+                };
+                const blob = new Blob([JSON.stringify(layout, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'facs_layout.json';
+                a.click();
+                URL.revokeObjectURL(url);
+            };
 
-                const firstSample = meltedData[0];
+            const handleLayoutUpload = async (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
+                if (!meltedData) {
+                    setError('Load a FACS file before importing a layout.');
+                    return;
+                }
+                const proceed = window.confirm('Importing a layout will overwrite current selections. Continue?');
+                if (!proceed) return;
+                
+                try {
+                    const text = await file.text();
+                    const layout = JSON.parse(text);
+                    const nextIncludeAlias = !!layout.includeAlias;
+                    const availableColumns = nextIncludeAlias
+                        ? [...baseColumnOrder, 'SampleAlias']
+                        : [...baseColumnOrder];
+                    const columnSet = new Set(availableColumns);
+                    const filteredColumns = Array.isArray(layout.selectedColumns)
+                        ? layout.selectedColumns.filter(col => columnSet.has(col))
+                        : availableColumns;
+                    const sampleSet = new Set(baseSampleOrder);
+                    const filteredSamples = Array.isArray(layout.selectedSamples)
+                        ? layout.selectedSamples.filter(s => s && sampleSet.has(s.name)).map(s => ({
+                            name: s.name,
+                            alias: s.alias || ''
+                        }))
+                        : baseSampleOrder.map(name => ({ name, alias: '' }));
+
+                    let nextColumns = filteredColumns.length > 0 ? filteredColumns : availableColumns;
+                    if (nextIncludeAlias && !nextColumns.includes('SampleAlias')) {
+                        const insertIndex = nextColumns.indexOf('Sample');
+                        const withAlias = nextColumns.slice();
+                        if (insertIndex >= 0) {
+                            withAlias.splice(insertIndex + 1, 0, 'SampleAlias');
+                        } else {
+                            withAlias.unshift('SampleAlias');
+                        }
+                        nextColumns = withAlias;
+                    }
+
+                    setIncludeAlias(nextIncludeAlias);
+                    setSelectedColumns(nextColumns);
+                    setSelectedSamples(filteredSamples.length > 0 ? filteredSamples : baseSampleOrder.map(name => ({ name, alias: '' })));
+                    if (filteredColumns.length === 0 || filteredSamples.length === 0) {
+                        setError('Layout imported with missing columns/samples that do not exist in this file.');
+                    }
+                } catch (err) {
+                    setError(`Layout import failed: ${err.message}`);
+                }
+            };
+
+            const renderMeltedPreview = () => {
+                const outputData = buildOutputData();
+                if (!outputData || outputData.length === 0) return null;
+
+                const firstSample = outputData[0];
                 const columns = Object.keys(firstSample);
                 const maxColumns = 10; // Show first 10 columns for preview
 
                 return (
-                    <div className="mt-6">
+                    <div className="mt-6 mb-4">
                         <h3 className="text-lg font-semibold mb-4">Preview of Melted X/Y Table</h3>
                         <p className="text-sm text-gray-600 mb-4">
-                            Rows: Samples ({meltedData.length}) | Columns: Gates/Frequencies ({columns.length - 1})
+                            Rows: Samples ({outputData.length}) | Columns: Gates/Frequencies ({Math.max(columns.length - 1, 0)})
                         </p>
                         <div className="overflow-x-auto">
                             <table className="min-w-full border-collapse border border-gray-300 text-xs">
                                 <thead>
                                     <tr className="bg-gray-100">
                                         {columns.slice(0, maxColumns).map((col, index) => (
-                                            <th key={index} className="border border-gray-300 px-2 py-2 text-left font-medium">
+                                            <th key={index} className="border border-gray-300 px-2 py-1 text-left font-medium">
                                                 {col}
                                             </th>
                                         ))}
                                         {columns.length > maxColumns && (
-                                            <th className="border border-gray-300 px-2 py-2 text-left font-medium">
+                                            <th className="border border-gray-300 px-2 py-1 text-left font-medium">
                                                 ...
                                             </th>
                                         )}
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {meltedData.slice(0, 10).map((row, rowIndex) => (
+                                    {outputData.slice(0, 5).map((row, rowIndex) => (
                                         <tr key={rowIndex} className={rowIndex % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
                                             {columns.slice(0, maxColumns).map((col, colIndex) => (
-                                                <td key={colIndex} className="border border-gray-300 px-2 py-2">
+                                                <td key={colIndex} className={`border border-gray-300 px-2 py-1 ${getCellClass(col)}`}>
                                                     {row[col]}
                                                 </td>
                                             ))}
                                             {columns.length > maxColumns && (
-                                                <td className="border border-gray-300 px-2 py-2 text-gray-400">
+                                                <td className="border border-gray-300 px-2 py-1 text-gray-400">
                                                     ...
                                                 </td>
                                             )}
@@ -296,25 +522,65 @@
                                 </tbody>
                             </table>
                         </div>
-                        <div className="mt-4 text-sm text-gray-600">
-                            <p>• Showing first {Math.min(10, meltedData.length)} samples and first {Math.min(maxColumns, columns.length)} columns</p>
-                            <p>• Column format: Depth.GateName.Type</p>
-                            <p>• Gate columns: ".Count" (cell counts) and ".%" (percentages)</p>
-                            <p>• Frequency columns: ".Freq" (frequency percentages)</p>
-                            <p>• Examples: "0.Total Event.Count", "1.Lymphocytes.%", "2.HSC of Live_Lin-.Freq"</p>
-                            <p>• Download full table to see all {meltedData.length} samples × {columns.length} columns</p>
-                        </div>
+                    </div>
+                );
+            };
+
+            const renderPreviewNote = () => {
+                const outputData = buildOutputData();
+                if (!outputData || outputData.length === 0) return null;
+                const columns = Object.keys(outputData[0] || {});
+                return (
+                    <div className="mt-4 text-sm text-gray-600">
+                        <p>• Showing first {Math.min(5, outputData.length)} samples and first {Math.min(10, columns.length)} columns</p>
+                        <p>• Column format: Depth.GateName.Type</p>
+                        <p>• Gate columns: ".Count" (cell counts) and ".%" (percentages)</p>
+                        <p>• Frequency columns: ".Freq" (frequency percentages)</p>
+                        <p>• Examples: "0.Total Event.Count", "1.Lymphocytes.%", "2.HSC of Live_Lin-.Freq"</p>
+                        <p>• Download full table to see all {outputData.length} samples × {columns.length} columns</p>
                     </div>
                 );
             };
 
             return (
                 <div className="max-w-7xl mx-auto p-6">
-                    <div className="mb-8">
-                        <h1 className="text-3xl font-bold text-gray-900 mb-2">FACS Data Transformer - Melted X/Y Table</h1>
-                        <p className="text-gray-600">
-                            Transform hierarchical FACS data into a melted X/Y table where rows are samples and columns are gates/frequencies.
-                        </p>
+                    <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                            <h1 className="text-3xl font-bold text-gray-900 mb-2">FACS Data Transformer - Melted X/Y Table</h1>
+                            <p className="text-gray-600">
+                                Transform hierarchical FACS data into a melted X/Y table where rows are samples and columns are gates/frequencies.
+                            </p>
+                        </div>
+                        {meltedData && (
+                            <div className="w-full max-w-xl">
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                        onClick={downloadMeltedData}
+                                        className="col-span-2 flex items-center justify-center px-5 py-2.5 bg-[#81f494] text-slate-900 rounded-lg hover:bg-[#6fe887] transition-colors"
+                                    >
+                                        <Download className="h-5 w-5 mr-2" />
+                                        Download Melted X/Y Table
+                                    </button>
+                                    <button
+                                        onClick={downloadLayout}
+                                        className="flex items-center justify-center px-4 py-2.5 bg-[#3ed3d6] text-slate-900 rounded-lg hover:bg-[#2fc4c7] transition-colors"
+                                    >
+                                        <Download className="h-5 w-5 mr-2" />
+                                        Download Layout
+                                    </button>
+                                    <label className="flex items-center justify-center px-4 py-2.5 bg-[#a8acea] text-slate-900 rounded-lg hover:bg-[#969be0] transition-colors cursor-pointer">
+                                        <Upload className="h-5 w-5 mr-2" />
+                                        Upload Layout
+                                        <input
+                                            type="file"
+                                            accept=".json"
+                                            onChange={handleLayoutUpload}
+                                            className="hidden"
+                                        />
+                                    </label>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     <div className="mb-6">
@@ -379,19 +645,192 @@
                         </div>
                     )}
 
+                    {renderMeltedPreview()}
+
                     {meltedData && (
-                        <div className="mb-6">
-                            <button
-                                onClick={downloadMeltedData}
-                                className="flex items-center px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                            >
-                                <Download className="h-5 w-5 mr-2" />
-                                Download Melted X/Y Table
-                            </button>
+                        <div className="mb-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <div className="bg-white border border-gray-200 rounded-lg p-4">
+                                <div className="flex items-center justify-between mb-3">
+                                    <h3 className="text-lg font-semibold">Column Selection & Order</h3>
+                                </div>
+                                <div className="flex items-center gap-2 mb-4">
+                                    <input
+                                        id="include-alias"
+                                        type="checkbox"
+                                        checked={includeAlias}
+                                        onChange={(e) => toggleAliasColumn(e.target.checked)}
+                                    />
+                                    <label htmlFor="include-alias" className="text-sm text-gray-700">
+                                        Include editable Sample Alias column
+                                    </label>
+                                </div>
+                                <div className="mb-3">
+                                    <div className="text-sm font-medium text-gray-700 mb-2">Selected columns</div>
+                                    <div className="space-y-1">
+                                        {selectedColumns.map((col, index) => {
+                                            const isDragging = dragItem && dragItem.type === 'columns' && dragItem.index === index;
+                                            const isDropTarget = dragOver && dragOver.type === 'columns' && dragOver.index === index && !isDragging;
+                                            return (
+                                            <div
+                                                key={`${col}-${index}`}
+                                                className={`flex items-center justify-between rounded-md px-2.5 py-1 text-sm cursor-move border transition-all ${
+                                                    isDragging
+                                                        ? 'bg-blue-100 border-blue-400 shadow-md'
+                                                        : `${getColumnBadgeClass(col)} hover:border-blue-300 hover:shadow-sm`
+                                                } ${isDropTarget ? 'shadow-[inset_0_0_0_2px_rgba(0,0,0,0.75)]' : ''}`}
+                                                draggable
+                                                onDragStart={() => handleDragStart('columns', index)}
+                                                onDragOver={(event) => handleDragOver(event, 'columns', index)}
+                                                onDrop={() => handleDrop('columns', index)}
+                                                onDragEnd={handleDragEnd}
+                                            >
+                                                <span className="truncate">{col}</span>
+                                                <div className="flex items-center gap-1">
+                                                    <button
+                                                        onClick={() => setSelectedColumns(moveItem(selectedColumns, index, index - 1))}
+                                                        className="text-xs px-2 py-0.5 border rounded hover:bg-white"
+                                                    >
+                                                        Up
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setSelectedColumns(moveItem(selectedColumns, index, index + 1))}
+                                                        className="text-xs px-2 py-0.5 border rounded hover:bg-white"
+                                                    >
+                                                        Down
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setSelectedColumns(selectedColumns.filter((_, i) => i !== index))}
+                                                        className="text-xs px-2 py-0.5 border rounded hover:bg-white"
+                                                    >
+                                                        Remove
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        );
+                                        })}
+                                    </div>
+                                </div>
+                                <div>
+                                    <div className="text-sm font-medium text-gray-700 mb-2">Available columns</div>
+                                    <div className="space-y-1">
+                                        {getAvailableColumns().map((col) => (
+                                            <div key={col} className={`flex items-center justify-between rounded-md px-2.5 py-1 text-sm border ${getColumnBadgeClass(col)}`}>
+                                                <span className="truncate">{col}</span>
+                                                <button
+                                                    onClick={() => setSelectedColumns([...selectedColumns, col])}
+                                                    className="text-xs px-2 py-0.5 border rounded hover:bg-white"
+                                                >
+                                                    Add
+                                                </button>
+                                            </div>
+                                        ))}
+                                        {getAvailableColumns().length === 0 && (
+                                            <div className="text-xs text-gray-500">All columns are selected.</div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="bg-white border border-gray-200 rounded-lg p-4">
+                                <div className="flex items-center justify-between mb-3">
+                                    <h3 className="text-lg font-semibold">Sample Selection & Order</h3>
+                                </div>
+                                <div className="mb-3">
+                                    <div className="text-sm font-medium text-gray-700 mb-2">Selected samples</div>
+                                    <div className="space-y-1">
+                                        {selectedSamples.map((entry, index) => {
+                                            const isDragging = dragItem && dragItem.type === 'samples' && dragItem.index === index;
+                                            const isDropTarget = dragOver && dragOver.type === 'samples' && dragOver.index === index && !isDragging;
+                                            return (
+                                            <div
+                                                key={`${entry.name}-${index}`}
+                                                className={`rounded-md px-2.5 py-1 text-sm cursor-move border transition-all ${
+                                                    isDragging
+                                                        ? 'bg-blue-100 border-blue-400 shadow-md'
+                                                        : 'bg-white border-gray-200 hover:border-blue-300 hover:shadow-sm'
+                                                } ${isDropTarget ? 'shadow-[inset_0_0_0_2px_rgba(0,0,0,0.75)]' : ''}`}
+                                                draggable
+                                                onDragStart={() => handleDragStart('samples', index)}
+                                                onDragOver={(event) => handleDragOver(event, 'samples', index)}
+                                                onDrop={() => handleDrop('samples', index)}
+                                                onDragEnd={handleDragEnd}
+                                            >
+                                                <div className="flex items-center justify-between gap-1 mb-1">
+                                                    <span className="truncate">{entry.name}</span>
+                                                    <div className="flex items-center gap-1">
+                                                        <button
+                                                            onClick={() => setSelectedSamples(moveItem(selectedSamples, index, index - 1))}
+                                                            className="text-xs px-2 py-0.5 border rounded hover:bg-white"
+                                                            tabIndex={-1}
+                                                        >
+                                                            Up
+                                                        </button>
+                                                        <button
+                                                            onClick={() => setSelectedSamples(moveItem(selectedSamples, index, index + 1))}
+                                                            className="text-xs px-2 py-0.5 border rounded hover:bg-white"
+                                                            tabIndex={-1}
+                                                        >
+                                                            Down
+                                                        </button>
+                                                        <button
+                                                            onClick={() => setSelectedSamples([...selectedSamples.slice(0, index + 1), { name: entry.name, alias: entry.alias || '' }, ...selectedSamples.slice(index + 1)])}
+                                                            className="text-xs px-2 py-0.5 border rounded hover:bg-white"
+                                                            tabIndex={-1}
+                                                        >
+                                                            Duplicate
+                                                        </button>
+                                                        <button
+                                                            onClick={() => setSelectedSamples(selectedSamples.filter((_, i) => i !== index))}
+                                                            className="text-xs px-2 py-0.5 border rounded hover:bg-white"
+                                                            tabIndex={-1}
+                                                        >
+                                                            Remove
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                {includeAlias && (
+                                                    <div className="flex items-center gap-1">
+                                                        <label className="text-xs text-gray-600">Alias</label>
+                                                        <input
+                                                            type="text"
+                                                            value={entry.alias || ''}
+                                                            onChange={(e) => {
+                                                                const next = selectedSamples.slice();
+                                                                next[index] = { ...next[index], alias: e.target.value };
+                                                                setSelectedSamples(next);
+                                                            }}
+                                                            className="flex-1 px-2 py-0.5 border rounded text-xs"
+                                                            placeholder="Optional sample alias"
+                                                        />
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                        })}
+                                    </div>
+                                </div>
+                                <div>
+                                    <div className="text-sm font-medium text-gray-700 mb-2">Available samples</div>
+                                    <div className="space-y-1">
+                                        {getAvailableSamples().map((name) => (
+                                            <div key={name} className="flex items-center justify-between bg-white border border-gray-200 rounded-md px-2.5 py-1 text-sm">
+                                                <span className="truncate">{name}</span>
+                                                <button
+                                                    onClick={() => setSelectedSamples([...selectedSamples, { name, alias: '' }])}
+                                                    className="text-xs px-2 py-0.5 border rounded hover:bg-white"
+                                                >
+                                                    Add
+                                                </button>
+                                            </div>
+                                        ))}
+                                        {getAvailableSamples().length === 0 && (
+                                            <div className="text-xs text-gray-500">All samples are selected.</div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     )}
-
-                    {renderMeltedPreview()}
 
                     <div className="mt-8 p-6 bg-gray-50 rounded-lg">
                         <h3 className="text-lg font-semibold mb-4 flex items-center">
@@ -408,6 +847,8 @@
                             <li>• <strong>Missing data:</strong> Empty cells where a gate/frequency doesn't exist for a sample</li>
                         </ul>
                     </div>
+
+                    {renderPreviewNote()}
                 </div>
             );
         };
