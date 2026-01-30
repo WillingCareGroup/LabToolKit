@@ -36,7 +36,12 @@ Transform hierarchical FACS gating exports into a melted X/Y table.
 Usage:
 1) Open the HTML file in a browser.
 2) Upload the Excel file.
-3) Preview the melted table and download the output.
+3) Reorder/select columns and samples (drag-and-drop), optionally add Sample Alias.
+4) Preview the melted table and download the output.
+
+Layout features:
+- Save layout (selected columns + order, selected samples + order/duplicates, aliases).
+- Import layout later (overwrites current selections).
 
 ### GetBE v5
 
