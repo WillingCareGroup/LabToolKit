@@ -6,9 +6,9 @@
 ```
 
 ```dataview
- TABLE WITHOUT ID 
-  file.cday AS "Time", <% await tp.file.title%> AS "Note"
+TABLE WITHOUT ID
+  file.cday AS "Time", Code AS "Note"
  FROM #DailyEntries
- WHERE <% await tp.file.title%>
+ WHERE contains(file.outlinks, this.file.link)
  SORT file.ctime ASC
 ```

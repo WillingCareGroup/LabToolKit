@@ -26,9 +26,9 @@ LabNote/
 
 ## Scripts
 
-- `scripts/daily_entry_script.md`: creates a daily entry note from the template.
-- `scripts/experiment_script.md`: creates a dated experiment note and links it.
-- `scripts/milestone_script.md`: creates a monthly milestone note.
+- `scripts/daily_entry_script.md`: opens today's daily note if it exists, otherwise creates it and lists ongoing experiments.
+- `scripts/experiment_script.md`: creates an experiment note with an auto-generated code and optional custom title.
+- `scripts/milestone_script.md`: renames and moves the current note into the monthly milestone entry, then inserts the template.
 - `scripts/dataview_block.md`: shows archived experiments and linked daily entries.
 
 ## How it auto-propagates
@@ -40,7 +40,7 @@ flowchart TD
   B -->|Experiment| D[Create Experiment note]
   B -->|Milestone| E[Create Milestone note]
   C --> F[Dataview: list Ongoing Experiments]
-  D --> G[Auto tag #OngoingExperiments]
+  D --> G[Auto tag #OnGoingExperiments]
   G --> F
   D --> H[Daily entries link to experiment]
   H --> I[Dataview: experiment timeline]
@@ -55,5 +55,6 @@ flowchart TD
 
 ## Notes
 
-- Tags are case sensitive. This template uses `#OngoingExperiments` and `#ArchivedExperiments`.
+- Tags are case sensitive. This version uses `#OnGoingExperiments` and `#DailyEntries`.
+- Experiment notes keep a `Code` frontmatter field and are surfaced in daily notes through links.
 - If your vault uses different folders, update the folder paths in the scripts.
