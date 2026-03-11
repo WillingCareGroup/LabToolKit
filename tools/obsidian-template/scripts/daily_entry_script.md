@@ -1,7 +1,7 @@
 <%*
 const DAILY_FOLDER = "LabNote/Daily Entries";
 const EXP_FOLDER = "LabNote/Experiments";
-const ONGOING_MARKER = "#OnGoingExperiments";
+const ONGOING_MARKERS = ["#OnGoingExperiments", "#OngoingExperiments"];
 
 const todayName = window.moment().format("YYYY-MM-DD");
 const dailyPath = `${DAILY_FOLDER}/${todayName}`;
@@ -27,7 +27,7 @@ let items = [];
 
 for (const f of expFiles) {
   const content = await app.vault.cachedRead(f);
-  if (!content.includes(ONGOING_MARKER)) continue;
+  if (!ONGOING_MARKERS.some(tag => content.includes(tag))) continue;
 
   const cache = app.metadataCache.getFileCache(f);
   const fm = cache?.frontmatter ?? {};
@@ -56,7 +56,7 @@ tags:
 \`\`\`dataview
 TABLE WITHOUT ID
   file.name AS "OnGoingProject", Name AS "Name", Project AS "Project"
-FROM #OnGoingExperiments
+FROM #OnGoingExperiments OR #OngoingExperiments
 WHERE file.name != "Daily Entry Script"
   AND file.name != "Experiment template"
 SORT file.name ASC
