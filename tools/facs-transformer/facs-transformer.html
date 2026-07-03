@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FACS Data Transformer - Melted Table</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/react@18.2.0/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         .lucide-icon {
@@ -665,7 +665,18 @@
                                     </label>
                                 </div>
                                 <div className="mb-3">
-                                    <div className="text-sm font-medium text-gray-700 mb-2">Selected columns</div>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <div className="text-sm font-medium text-gray-700">Selected columns</div>
+                                        <button
+                                            onClick={() => {
+                                                setIncludeAlias(false);
+                                                setSelectedColumns(baseColumnOrder);
+                                            }}
+                                            className="text-xs px-2 py-0.5 border rounded hover:bg-white"
+                                        >
+                                            Reset
+                                        </button>
+                                    </div>
                                     <div className="space-y-1">
                                         {selectedColumns.map((col, index) => {
                                             const isDragging = dragItem && dragItem.type === 'columns' && dragItem.index === index;
@@ -736,7 +747,15 @@
                                     <h3 className="text-lg font-semibold">Sample Selection & Order</h3>
                                 </div>
                                 <div className="mb-3">
-                                    <div className="text-sm font-medium text-gray-700 mb-2">Selected samples</div>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <div className="text-sm font-medium text-gray-700">Selected samples</div>
+                                        <button
+                                            onClick={() => setSelectedSamples(baseSampleOrder.map((name) => ({ name, alias: '' })))}
+                                            className="text-xs px-2 py-0.5 border rounded hover:bg-white"
+                                        >
+                                            Reset
+                                        </button>
+                                    </div>
                                     <div className="space-y-1">
                                         {selectedSamples.map((entry, index) => {
                                             const isDragging = dragItem && dragItem.type === 'samples' && dragItem.index === index;
