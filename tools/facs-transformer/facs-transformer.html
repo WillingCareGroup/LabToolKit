@@ -56,6 +56,48 @@
             </svg>
         );
 
+        const parseWell = (name) => {
+            if (!name || typeof name !== 'string') return null;
+            const m = name.match(/^([A-H])(\d{1,2})$/);
+            if (!m) return null;
+            const row = m[1].charCodeAt(0) - 65;
+            const col = parseInt(m[2], 10) - 1;
+            if (row < 0 || row > 7 || col < 0 || col > 11) return null;
+            return { row, col };
+        };
+
+        const wellName = (row, col) => String.fromCharCode(65 + row) + (col + 1);
+
+        const enumerateRect = (anchor, rows, cols, order) => {
+            const wells = [];
+            if (order === 'col') {
+                for (let c = 0; c < cols; c++) {
+                    for (let r = 0; r < rows; r++) {
+                        wells.push({ row: anchor.row + r, col: anchor.col + c });
+                    }
+                }
+            } else {
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        wells.push({ row: anchor.row + r, col: anchor.col + c });
+                    }
+                }
+            }
+            return wells;
+        };
+
+        const boundingRect = (wells) => {
+            if (!wells || wells.length === 0) return null;
+            let minR = 7, maxR = 0, minC = 11, maxC = 0;
+            wells.forEach(w => {
+                if (w.row < minR) minR = w.row;
+                if (w.row > maxR) maxR = w.row;
+                if (w.col < minC) minC = w.col;
+                if (w.col > maxC) maxC = w.col;
+            });
+            return { anchor: { row: minR, col: minC }, rows: maxR - minR + 1, cols: maxC - minC + 1 };
+        };
+
         const FacsDataTransformer = () => {
             const [originalData, setOriginalData] = useState(null);
             const [transformedData, setTransformedData] = useState(null);
@@ -71,6 +113,7 @@
             const [sourceFileName, setSourceFileName] = useState('');
             const [dragItem, setDragItem] = useState(null);
             const [dragOver, setDragOver] = useState(null);
+            const [remapState, setRemapState] = useState(null);
 
             const handleFileUpload = async (event) => {
                 const file = event.target.files[0];
@@ -422,6 +465,28 @@
                 URL.revokeObjectURL(url);
             };
 
+            const resolveLayoutColumns = (layout, nextIncludeAlias) => {
+                const availableColumns = nextIncludeAlias
+                    ? [...baseColumnOrder, 'SampleAlias']
+                    : [...baseColumnOrder];
+                const columnSet = new Set(availableColumns);
+                const filteredColumns = Array.isArray(layout.selectedColumns)
+                    ? layout.selectedColumns.filter(col => columnSet.has(col))
+                    : availableColumns;
+                let nextColumns = filteredColumns.length > 0 ? filteredColumns : availableColumns;
+                if (nextIncludeAlias && !nextColumns.includes('SampleAlias')) {
+                    const insertIndex = nextColumns.indexOf('Sample');
+                    const withAlias = nextColumns.slice();
+                    if (insertIndex >= 0) {
+                        withAlias.splice(insertIndex + 1, 0, 'SampleAlias');
+                    } else {
+                        withAlias.unshift('SampleAlias');
+                    }
+                    nextColumns = withAlias;
+                }
+                return { nextColumns, hadMissing: filteredColumns.length === 0 };
+            };
+
             const handleLayoutUpload = async (event) => {
                 const file = event.target.files[0];
                 if (!file) return;
@@ -431,47 +496,89 @@
                 }
                 const proceed = window.confirm('Importing a layout will overwrite current selections. Continue?');
                 if (!proceed) return;
-                
+
                 try {
                     const text = await file.text();
                     const layout = JSON.parse(text);
                     const nextIncludeAlias = !!layout.includeAlias;
-                    const availableColumns = nextIncludeAlias
-                        ? [...baseColumnOrder, 'SampleAlias']
-                        : [...baseColumnOrder];
-                    const columnSet = new Set(availableColumns);
-                    const filteredColumns = Array.isArray(layout.selectedColumns)
-                        ? layout.selectedColumns.filter(col => columnSet.has(col))
-                        : availableColumns;
-                    const sampleSet = new Set(baseSampleOrder);
-                    const filteredSamples = Array.isArray(layout.selectedSamples)
-                        ? layout.selectedSamples.filter(s => s && sampleSet.has(s.name)).map(s => ({
-                            name: s.name,
-                            alias: s.alias || ''
-                        }))
+                    const { nextColumns, hadMissing } = resolveLayoutColumns(layout, nextIncludeAlias);
+
+                    const layoutSamplesRaw = Array.isArray(layout.selectedSamples)
+                        ? layout.selectedSamples.filter(s => s && s.name).map(s => ({ name: s.name, alias: s.alias || '' }))
                         : baseSampleOrder.map(name => ({ name, alias: '' }));
 
-                    let nextColumns = filteredColumns.length > 0 ? filteredColumns : availableColumns;
-                    if (nextIncludeAlias && !nextColumns.includes('SampleAlias')) {
-                        const insertIndex = nextColumns.indexOf('Sample');
-                        const withAlias = nextColumns.slice();
-                        if (insertIndex >= 0) {
-                            withAlias.splice(insertIndex + 1, 0, 'SampleAlias');
-                        } else {
-                            withAlias.unshift('SampleAlias');
-                        }
-                        nextColumns = withAlias;
+                    const sampleSet = new Set(baseSampleOrder);
+                    const exact = layoutSamplesRaw.filter(s => sampleSet.has(s.name));
+                    const missing = layoutSamplesRaw.filter(s => !sampleSet.has(s.name));
+
+                    const layoutWellSamples = layoutSamplesRaw.filter(s => parseWell(s.name));
+                    const fileWellNames = baseSampleOrder.filter(n => parseWell(n));
+
+                    // Open remap dialog if any layout samples are missing and both sides have wells to work with.
+                    if (missing.length > 0 && layoutWellSamples.length > 0 && fileWellNames.length > 0) {
+                        const layoutWells = layoutWellSamples.map(s => parseWell(s.name));
+                        const layoutBox = boundingRect(layoutWells) || { anchor: { row: 0, col: 0 }, rows: 3, cols: 8 };
+                        const fileWells = fileWellNames.map(parseWell);
+                        const fileBox = boundingRect(fileWells) || { anchor: { row: 0, col: 0 }, rows: 3, cols: 8 };
+
+                        setRemapState({
+                            layoutSamples: layoutSamplesRaw,
+                            layoutColumns: nextColumns,
+                            includeAlias: nextIncludeAlias,
+                            layoutBox,
+                            fileWellSet: new Set(fileWellNames),
+                            fileAnchor: fileBox.anchor,
+                            rows: fileBox.rows,
+                            cols: fileBox.cols,
+                            order: 'row'
+                        });
+                        return;
                     }
 
                     setIncludeAlias(nextIncludeAlias);
                     setSelectedColumns(nextColumns);
-                    setSelectedSamples(filteredSamples.length > 0 ? filteredSamples : baseSampleOrder.map(name => ({ name, alias: '' })));
-                    if (filteredColumns.length === 0 || filteredSamples.length === 0) {
+                    setSelectedSamples(exact.length > 0 ? exact : baseSampleOrder.map(name => ({ name, alias: '' })));
+                    if (hadMissing || exact.length === 0) {
                         setError('Layout imported with missing columns/samples that do not exist in this file.');
                     }
                 } catch (err) {
                     setError(`Layout import failed: ${err.message}`);
                 }
+            };
+
+            const computeRemapMapping = (state) => {
+                if (!state) return [];
+                const targetWells = enumerateRect(state.fileAnchor, state.rows, state.cols, state.order)
+                    .filter(w => w.row <= 7 && w.col <= 11);
+                const mapping = [];
+                state.layoutSamples.forEach((s, i) => {
+                    const target = targetWells[i];
+                    if (!target) {
+                        mapping.push({ source: s, target: null, targetName: null, valid: false, reason: 'past rect' });
+                        return;
+                    }
+                    const targetName = wellName(target.row, target.col);
+                    const inFile = state.fileWellSet.has(targetName);
+                    mapping.push({ source: s, target, targetName, valid: inFile, reason: inFile ? null : 'not in file' });
+                });
+                return mapping;
+            };
+
+            const applyRemap = () => {
+                if (!remapState) return;
+                const mapping = computeRemapMapping(remapState);
+                const nextSamples = mapping
+                    .filter(m => m.valid)
+                    .map(m => ({ name: m.targetName, alias: m.source.alias || '' }));
+                setIncludeAlias(remapState.includeAlias);
+                setSelectedColumns(remapState.layoutColumns);
+                setSelectedSamples(nextSamples.length > 0 ? nextSamples : baseSampleOrder.map(name => ({ name, alias: '' })));
+                if (nextSamples.length < remapState.layoutSamples.length) {
+                    setError(`Remap complete: ${nextSamples.length}/${remapState.layoutSamples.length} samples mapped. Remainder had no matching well.`);
+                } else {
+                    setError(null);
+                }
+                setRemapState(null);
             };
 
             const renderMeltedPreview = () => {
@@ -868,8 +975,207 @@
                     </div>
 
                     {renderPreviewNote()}
+
+                    {remapState && renderRemapDialog()}
                 </div>
             );
+
+            function renderRemapDialog() {
+                const mapping = computeRemapMapping(remapState);
+                const targetWellMap = new Map();
+                mapping.forEach((m, idx) => {
+                    if (m.target) {
+                        const key = `${m.target.row},${m.target.col}`;
+                        targetWellMap.set(key, { idx, valid: m.valid, alias: m.source.alias, source: m.source.name });
+                    }
+                });
+
+                const layoutWellMap = new Map();
+                remapState.layoutSamples.forEach((s, idx) => {
+                    const w = parseWell(s.name);
+                    if (w) layoutWellMap.set(`${w.row},${w.col}`, { idx, alias: s.alias, name: s.name });
+                });
+
+                const mappedCount = mapping.filter(m => m.valid).length;
+                const droppedCount = remapState.layoutSamples.length - mappedCount;
+
+                const renderPlate = (title, cellFor) => (
+                    <div>
+                        <div className="text-sm font-medium mb-1">{title}</div>
+                        <div className="inline-block border border-gray-300 bg-white p-1 rounded">
+                            <div className="flex">
+                                <div className="w-5 h-5" />
+                                {Array.from({ length: 12 }).map((_, c) => (
+                                    <div key={c} className="w-6 h-5 text-[10px] text-gray-500 flex items-center justify-center">{c + 1}</div>
+                                ))}
+                            </div>
+                            {Array.from({ length: 8 }).map((_, r) => (
+                                <div key={r} className="flex">
+                                    <div className="w-5 h-6 text-[10px] text-gray-500 flex items-center justify-center">{String.fromCharCode(65 + r)}</div>
+                                    {Array.from({ length: 12 }).map((_, c) => cellFor(r, c))}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                );
+
+                const layoutCell = (r, c) => {
+                    const info = layoutWellMap.get(`${r},${c}`);
+                    const cls = info
+                        ? 'bg-indigo-200 border-indigo-400 text-indigo-900'
+                        : 'bg-gray-50 border-gray-200 text-gray-300';
+                    return (
+                        <div key={c} className={`w-6 h-6 border text-[9px] flex items-center justify-center ${cls}`} title={info ? `${wellName(r, c)} → ${info.alias || '(no alias)'}` : wellName(r, c)}>
+                            {info ? info.idx + 1 : ''}
+                        </div>
+                    );
+                };
+
+                const fileCell = (r, c) => {
+                    const inFile = remapState.fileWellSet.has(wellName(r, c));
+                    const target = targetWellMap.get(`${r},${c}`);
+                    const inRect =
+                        r >= remapState.fileAnchor.row && r < remapState.fileAnchor.row + remapState.rows &&
+                        c >= remapState.fileAnchor.col && c < remapState.fileAnchor.col + remapState.cols;
+                    let cls = 'bg-gray-50 border-gray-200 text-gray-300';
+                    if (target && target.valid) cls = 'bg-emerald-200 border-emerald-500 text-emerald-900';
+                    else if (target && !target.valid) cls = 'bg-red-100 border-red-400 text-red-800';
+                    else if (inFile && !inRect) cls = 'bg-amber-100 border-amber-400 text-amber-800';
+                    else if (inFile) cls = 'bg-white border-gray-300 text-gray-500';
+                    else if (inRect) cls = 'bg-gray-100 border-gray-300 text-gray-400';
+                    const label = target ? target.idx + 1 : (inFile ? '·' : '');
+                    return (
+                        <div
+                            key={c}
+                            className={`w-6 h-6 border text-[9px] flex items-center justify-center cursor-pointer ${cls}`}
+                            title={target ? `${wellName(r, c)} ← ${target.source} (${target.alias || 'no alias'})` : wellName(r, c)}
+                            onClick={() => setRemapState({ ...remapState, fileAnchor: { row: r, col: c } })}
+                        >{label}</div>
+                    );
+                };
+
+                return (
+                    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                        <div className="bg-white rounded-lg shadow-xl max-w-5xl w-full max-h-[95vh] overflow-auto p-6">
+                            <h3 className="text-xl font-semibold mb-2">Remap wells</h3>
+                            <p className="text-sm text-gray-600 mb-4">
+                                Layout wells don't all exist in this file. Pick the file's top-left anchor and shape,
+                                then confirm. Aliases will follow the ordinal position of each layout sample.
+                            </p>
+
+                            <div className="flex flex-wrap gap-6 mb-4">
+                                {renderPlate(`Layout plate (${remapState.layoutSamples.length} samples, numbered by order)`, layoutCell)}
+                                {renderPlate('File plate (click a well to set top-left anchor)', fileCell)}
+                            </div>
+
+                            <div className="flex flex-wrap gap-4 items-end mb-4">
+                                <div>
+                                    <label className="block text-xs text-gray-600">Anchor row</label>
+                                    <select
+                                        value={remapState.fileAnchor.row}
+                                        onChange={(e) => setRemapState({ ...remapState, fileAnchor: { ...remapState.fileAnchor, row: parseInt(e.target.value, 10) } })}
+                                        className="border rounded px-2 py-1 text-sm"
+                                    >
+                                        {Array.from({ length: 8 }).map((_, i) => (
+                                            <option key={i} value={i}>{String.fromCharCode(65 + i)}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-gray-600">Anchor col</label>
+                                    <select
+                                        value={remapState.fileAnchor.col}
+                                        onChange={(e) => setRemapState({ ...remapState, fileAnchor: { ...remapState.fileAnchor, col: parseInt(e.target.value, 10) } })}
+                                        className="border rounded px-2 py-1 text-sm"
+                                    >
+                                        {Array.from({ length: 12 }).map((_, i) => (
+                                            <option key={i} value={i}>{i + 1}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-gray-600">Rows</label>
+                                    <input
+                                        type="number" min={1} max={8}
+                                        value={remapState.rows}
+                                        onChange={(e) => setRemapState({ ...remapState, rows: Math.max(1, Math.min(8, parseInt(e.target.value, 10) || 1)) })}
+                                        className="border rounded px-2 py-1 text-sm w-16"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-gray-600">Cols</label>
+                                    <input
+                                        type="number" min={1} max={12}
+                                        value={remapState.cols}
+                                        onChange={(e) => setRemapState({ ...remapState, cols: Math.max(1, Math.min(12, parseInt(e.target.value, 10) || 1)) })}
+                                        className="border rounded px-2 py-1 text-sm w-16"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-gray-600">Scan order</label>
+                                    <select
+                                        value={remapState.order}
+                                        onChange={(e) => setRemapState({ ...remapState, order: e.target.value })}
+                                        className="border rounded px-2 py-1 text-sm"
+                                    >
+                                        <option value="row">Row-major (A1, A2, A3, …)</option>
+                                        <option value="col">Column-major (A1, B1, C1, …)</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div className="text-xs text-gray-600 mb-3 flex gap-4 flex-wrap">
+                                <span><span className="inline-block w-3 h-3 bg-indigo-200 border border-indigo-400 mr-1 align-middle" />Layout well</span>
+                                <span><span className="inline-block w-3 h-3 bg-emerald-200 border border-emerald-500 mr-1 align-middle" />Mapped (in file)</span>
+                                <span><span className="inline-block w-3 h-3 bg-red-100 border border-red-400 mr-1 align-middle" />Target well not in file</span>
+                                <span><span className="inline-block w-3 h-3 bg-amber-100 border border-amber-400 mr-1 align-middle" />Extra file well (omitted)</span>
+                                <span><span className="inline-block w-3 h-3 bg-white border border-gray-300 mr-1 align-middle" />File well outside rect</span>
+                            </div>
+
+                            <div className="mb-3 text-sm">
+                                <span className="font-medium">{mappedCount}</span> mapped, <span className="font-medium">{droppedCount}</span> dropped
+                            </div>
+
+                            <div className="max-h-48 overflow-auto border rounded mb-4">
+                                <table className="w-full text-xs">
+                                    <thead className="bg-gray-100 sticky top-0">
+                                        <tr>
+                                            <th className="px-2 py-1 text-left">#</th>
+                                            <th className="px-2 py-1 text-left">Layout well</th>
+                                            <th className="px-2 py-1 text-left">Alias</th>
+                                            <th className="px-2 py-1 text-left">→ File well</th>
+                                            <th className="px-2 py-1 text-left">Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {mapping.map((m, i) => (
+                                            <tr key={i} className={m.valid ? '' : 'bg-red-50'}>
+                                                <td className="px-2 py-1">{i + 1}</td>
+                                                <td className="px-2 py-1">{m.source.name}</td>
+                                                <td className="px-2 py-1">{m.source.alias || ''}</td>
+                                                <td className="px-2 py-1">{m.targetName || '—'}</td>
+                                                <td className="px-2 py-1">{m.valid ? 'ok' : (m.reason || 'dropped')}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div className="flex justify-end gap-2">
+                                <button
+                                    onClick={() => setRemapState(null)}
+                                    className="px-4 py-2 border rounded hover:bg-gray-50"
+                                >Cancel</button>
+                                <button
+                                    onClick={applyRemap}
+                                    disabled={mappedCount === 0}
+                                    className="px-4 py-2 bg-emerald-500 text-white rounded hover:bg-emerald-600 disabled:opacity-50"
+                                >Apply remap</button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
         };
 
         ReactDOM.render(<FacsDataTransformer />, document.getElementById('root'));
