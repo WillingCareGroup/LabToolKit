@@ -550,16 +550,30 @@
                 if (!state) return [];
                 const targetWells = enumerateRect(state.fileAnchor, state.rows, state.cols, state.order)
                     .filter(w => w.row <= 7 && w.col <= 11);
+                // Assign one target per unique source well (first-encounter order) so duplicates share a target.
+                const sourceKeyToOrdinal = new Map();
+                state.layoutSamples.forEach(s => {
+                    const w = parseWell(s.name);
+                    if (!w) return;
+                    const key = `${w.row},${w.col}`;
+                    if (!sourceKeyToOrdinal.has(key)) sourceKeyToOrdinal.set(key, sourceKeyToOrdinal.size);
+                });
                 const mapping = [];
-                state.layoutSamples.forEach((s, i) => {
-                    const target = targetWells[i];
+                state.layoutSamples.forEach((s) => {
+                    const w = parseWell(s.name);
+                    if (!w) {
+                        mapping.push({ source: s, ordinal: null, target: null, targetName: null, valid: false, reason: 'non-well name' });
+                        return;
+                    }
+                    const ordinal = sourceKeyToOrdinal.get(`${w.row},${w.col}`);
+                    const target = targetWells[ordinal];
                     if (!target) {
-                        mapping.push({ source: s, target: null, targetName: null, valid: false, reason: 'past rect' });
+                        mapping.push({ source: s, ordinal, target: null, targetName: null, valid: false, reason: 'past rect' });
                         return;
                     }
                     const targetName = wellName(target.row, target.col);
                     const inFile = state.fileWellSet.has(targetName);
-                    mapping.push({ source: s, target, targetName, valid: inFile, reason: inFile ? null : 'not in file' });
+                    mapping.push({ source: s, ordinal, target, targetName, valid: inFile, reason: inFile ? null : 'not in file' });
                 });
                 return mapping;
             };
@@ -983,17 +997,31 @@
             function renderRemapDialog() {
                 const mapping = computeRemapMapping(remapState);
                 const targetWellMap = new Map();
-                mapping.forEach((m, idx) => {
-                    if (m.target) {
+                mapping.forEach((m) => {
+                    if (m.target && m.ordinal != null) {
                         const key = `${m.target.row},${m.target.col}`;
-                        targetWellMap.set(key, { idx, valid: m.valid, alias: m.source.alias, source: m.source.name });
+                        const existing = targetWellMap.get(key);
+                        if (existing) {
+                            existing.count += 1;
+                            if (m.source.alias) existing.aliases.push(m.source.alias);
+                        } else {
+                            targetWellMap.set(key, { ordinal: m.ordinal, valid: m.valid, count: 1, source: m.source.name, aliases: m.source.alias ? [m.source.alias] : [] });
+                        }
                     }
                 });
 
                 const layoutWellMap = new Map();
-                remapState.layoutSamples.forEach((s, idx) => {
+                remapState.layoutSamples.forEach((s) => {
                     const w = parseWell(s.name);
-                    if (w) layoutWellMap.set(`${w.row},${w.col}`, { idx, alias: s.alias, name: s.name });
+                    if (!w) return;
+                    const key = `${w.row},${w.col}`;
+                    const existing = layoutWellMap.get(key);
+                    if (existing) {
+                        existing.count += 1;
+                        if (s.alias) existing.aliases.push(s.alias);
+                    } else {
+                        layoutWellMap.set(key, { idx: layoutWellMap.size, name: s.name, count: 1, aliases: s.alias ? [s.alias] : [] });
+                    }
                 });
 
                 const mappedCount = mapping.filter(m => m.valid).length;
@@ -1024,9 +1052,13 @@
                     const cls = info
                         ? 'bg-indigo-200 border-indigo-400 text-indigo-900'
                         : 'bg-gray-50 border-gray-200 text-gray-300';
+                    const label = info ? `${info.idx + 1}${info.count > 1 ? `×${info.count}` : ''}` : '';
+                    const title = info
+                        ? `${wellName(r, c)} (×${info.count})${info.aliases.length ? ' → ' + info.aliases.join(', ') : ''}`
+                        : wellName(r, c);
                     return (
-                        <div key={c} className={`w-6 h-6 border text-[9px] flex items-center justify-center ${cls}`} title={info ? `${wellName(r, c)} → ${info.alias || '(no alias)'}` : wellName(r, c)}>
-                            {info ? info.idx + 1 : ''}
+                        <div key={c} className={`w-6 h-6 border text-[9px] flex items-center justify-center ${cls}`} title={title}>
+                            {label}
                         </div>
                     );
                 };
@@ -1043,12 +1075,15 @@
                     else if (inFile && !inRect) cls = 'bg-amber-100 border-amber-400 text-amber-800';
                     else if (inFile) cls = 'bg-white border-gray-300 text-gray-500';
                     else if (inRect) cls = 'bg-gray-100 border-gray-300 text-gray-400';
-                    const label = target ? target.idx + 1 : (inFile ? '·' : '');
+                    const label = target ? `${target.ordinal + 1}${target.count > 1 ? `×${target.count}` : ''}` : (inFile ? '·' : '');
+                    const title = target
+                        ? `${wellName(r, c)} ← ${target.source} (×${target.count})${target.aliases.length ? ' [' + target.aliases.join(', ') + ']' : ''}`
+                        : wellName(r, c);
                     return (
                         <div
                             key={c}
                             className={`w-6 h-6 border text-[9px] flex items-center justify-center cursor-pointer ${cls}`}
-                            title={target ? `${wellName(r, c)} ← ${target.source} (${target.alias || 'no alias'})` : wellName(r, c)}
+                            title={title}
                             onClick={() => setRemapState({ ...remapState, fileAnchor: { row: r, col: c } })}
                         >{label}</div>
                     );
@@ -1150,7 +1185,7 @@
                                     <tbody>
                                         {mapping.map((m, i) => (
                                             <tr key={i} className={m.valid ? '' : 'bg-red-50'}>
-                                                <td className="px-2 py-1">{i + 1}</td>
+                                                <td className="px-2 py-1">{m.ordinal != null ? m.ordinal + 1 : '—'}</td>
                                                 <td className="px-2 py-1">{m.source.name}</td>
                                                 <td className="px-2 py-1">{m.source.alias || ''}</td>
                                                 <td className="px-2 py-1">{m.targetName || '—'}</td>
