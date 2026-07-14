@@ -550,14 +550,12 @@
                 if (!state) return [];
                 const targetWells = enumerateRect(state.fileAnchor, state.rows, state.cols, state.order)
                     .filter(w => w.row <= 7 && w.col <= 11);
-                // Assign one target per unique source well (first-encounter order) so duplicates share a target.
+                // Ordinal = the well's spatial position within the layout's bounding box (same
+                // enumeration order as the target), so the plate layout is preserved under the shift
+                // regardless of the order samples were selected in.
                 const sourceKeyToOrdinal = new Map();
-                state.layoutSamples.forEach(s => {
-                    const w = parseWell(s.name);
-                    if (!w) return;
-                    const key = `${w.row},${w.col}`;
-                    if (!sourceKeyToOrdinal.has(key)) sourceKeyToOrdinal.set(key, sourceKeyToOrdinal.size);
-                });
+                enumerateRect(state.layoutBox.anchor, state.layoutBox.rows, state.layoutBox.cols, state.order)
+                    .forEach((w, i) => sourceKeyToOrdinal.set(`${w.row},${w.col}`, i));
                 const mapping = [];
                 state.layoutSamples.forEach((s) => {
                     const w = parseWell(s.name);
@@ -1010,6 +1008,9 @@
                     }
                 });
 
+                const layoutOrdinal = new Map();
+                enumerateRect(remapState.layoutBox.anchor, remapState.layoutBox.rows, remapState.layoutBox.cols, remapState.order)
+                    .forEach((w, i) => layoutOrdinal.set(`${w.row},${w.col}`, i));
                 const layoutWellMap = new Map();
                 remapState.layoutSamples.forEach((s) => {
                     const w = parseWell(s.name);
@@ -1020,7 +1021,7 @@
                         existing.count += 1;
                         if (s.alias) existing.aliases.push(s.alias);
                     } else {
-                        layoutWellMap.set(key, { idx: layoutWellMap.size, name: s.name, count: 1, aliases: s.alias ? [s.alias] : [] });
+                        layoutWellMap.set(key, { idx: layoutOrdinal.get(key) ?? layoutWellMap.size, name: s.name, count: 1, aliases: s.alias ? [s.alias] : [] });
                     }
                 });
 
